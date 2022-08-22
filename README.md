@@ -1,51 +1,56 @@
-# do-taskmanager
+# do-transactional-outbox
 
-A TaskManager for Durable Objects, simplifying the use of Alarms.
+One of the challenges that many event-driven systems face is the fact that they have to write to the database and send out an event about it. But it is impossible (or at least very impractical) to have a database-like transaction span both a database and some sort of message bus.
 
-_WARNING_: This project code is currently in beta. Please do not use it in production for anything serious.
+The [Transactional Outbox pattern](https://microservices.io/patterns/data/transactional-outbox.html) is one way to solve this problem. By saving both the state and a message to the same database, we can use regular database transaction semantics, and we can then check the database to see if any messages need to be sent. And to retry sending them in the case of failures.
 
-With TaskManager, you can schedule any number of Tasks at multiple points in the future, and TaskManager will make sure they all get processed on time and automatically retried if they fail.
+## Installation
 
-A full example can be found in `worker/index.ts`, but to get started is easy by creating a Durable Object like this:
+The usual `npm install do-transaction-outbox` or `yarn add do-transactional-outbox` should do the trick
 
-```typescript
-import { Task, TaskManager, TM_DurableObject, withTaskManager } from 'do-taskmanager'
+## Usage
+
+If you wrap the export of your Durable Object with a `withTransactionalOutbox()`, a `OutboxManager` will automatically be added to your `env` Object under the key `OUTBOX_MANAGER`.
+
+The `OutboxManager` has a `put` method with exactly the same signatures as the `DurableObjectStorage` one, except with one extra argument, which is the message to be send.
+
+To actually send the messages you define an extra method on your Durable Object `sendMessages(messages: { id: string; msg: any }[]): Promise<void>`
+
+A full example:
+```
+import { OutboxManager, TOB_DurableObject, withTransactionalOutbox } from 'do-transactional-outbox'
 
 export interface Env {
-  TASK_MANAGER: TaskManager
+  TEST_DO_TOB: DurableObjectNamespace
+  OUTBOX_MANAGER: OutboxManager
 }
 
-class MyDO implements TM_DurableObject {
+class DO implements TOB_DurableObject {
+  private storage: DurableObjectStorage
   constructor(state: DurableObjectState, protected readonly env: Env) {
     this.storage = state.storage
   }
-  async processTask(task: Task): Promise<void> {
-    //DoSomethingInteresting(task)
+
+  async sendMessages(messages: { id: string; msg: any }[]): Promise<void> {
+    Object.entries(messages).forEach(async ([key, msg]) => {
+      await this.storage.put(`__msg::${key}`, msg)
+    })
   }
+  
   async fetch(request: Request): Promise<Response> {
-    const nextMinute = Date.now() + 60 * 1000
-    const headers = [...request.headers.entries()]
-    await this.env.TASK_MANAGER.scheduleTaskAt(nextMinute, { url: request.url, headers })
-    return new Response('Scheduled!')
+    const storage = this.env.OUTBOX_MANAGER
+    await storage.put(`one`, 'first', 'first')
+    const puts = {
+      two: 'second',
+      three: 'third',
+    }
+    await storage.put(puts, { type: 'multiples', blah: true })
+    return new Response('Ok', { status: 200 })
   }
 }
 
-const DO = withTaskManager(MyDO)
-export { DO }
+const exportedDO = withTransactionalOutbox(TestDO)
+
+export { exportedDO }
+
 ```
-
-The scheduling methods on `TaskManager` are listed below. In all instances `context` is any Javascript object/array/primitive supported by the [structured clone algorithm](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Structured_clone_algorithm), that you want
-to include in your task when processTask is called.
-
-* `scheduleTaskAt(time: PointInTime, context: any): Promise<taskId>` where `time` is the time in either ms since the epoch or a JS Date object.
-* `scheduleTaskIn(ms: number, context: any): Promise<taskId>` where `ms` is the amount of ms for now the task should be scheduled.
-* `scheduleEvery(ms: number, context: any): Promise<taskId>` where `ms` is the interval in milliseconds that the task should be scheduled.
-* `cancelTask(taskId: taskId): Promise<void>` where taskId is the id that is returned by any of the scheduling functions.
-
-In practice the exact timing that your function will be called will depend on many factors and may not be as precise, especially for times within 30 seconds from the time of scheduling.
-
-Please note that if your `processTask` throws an exception, it will retry once a minute until it succeeds. If you want to have a finite number of delivery attempts, you can check the `task.attempts` to see how many times this particular task has been attempted to be delivered before.
-
-TaskManager uses the same durable storage that your durable object uses, with the `$$_tasks` prefix. Which means that if you delete those records either directly, or through a `deleteAll`, it will also delete your tasks.
-
-Manually setting your own alarms should work as normal. TaskManager will intercept those calls and schedule them like a task, except the regular `alarm` method will be called instead of the `processTask` method. But it is recommended to only use Tasks. Note that calling `setAlarm` will still override a previous alarm scheduled with `setAlarm`.
