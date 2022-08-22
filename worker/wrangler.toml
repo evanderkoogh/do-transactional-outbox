@@ -1,0 +1,12 @@
+name = "do-transactional-outbox-test"
+main = "src/index.ts"
+compatibility_date = "2022-08-12"
+
+[durable_objects]
+bindings = [
+  { name = "TEST_DO_TOB", class_name = "Test_DO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Test_DO"]
