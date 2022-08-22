@@ -79,7 +79,7 @@ function proxyDO(targetDO: TOB_DurableObject & TM_DurableObject, storage: Durabl
       } else {
         const value = (target as any)[prop]
         if (typeof value === 'function') {
-          value.bind(receiver)
+          return value.bind(receiver)
         }
         return value
       }
