@@ -17,7 +17,7 @@ The `OutboxManager` has a `put` method with exactly the same signatures as the `
 To actually send the messages you define an extra method on your Durable Object `sendMessages(messages: { id: string; msg: any }[]): Promise<void>`
 
 A full example:
-```
+``` typescript
 import { OutboxManager, TOB_DurableObject, withTransactionalOutbox } from 'do-transactional-outbox'
 
 export interface Env {
